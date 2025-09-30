@@ -64,7 +64,7 @@ def normalizar(texto):
                     if unicodedata.category(c) != 'Mn')
     return texto
 
-# Vocabulário (completo com expansões)
+# Vocabulário 
 dicionario_aorta = {
     "estrutura": [
         "aorta", "aortica", "raiz", "sinotubular", "ascendente", "arco", 
