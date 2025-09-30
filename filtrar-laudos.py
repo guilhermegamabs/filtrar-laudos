@@ -3,13 +3,17 @@ import unicodedata
 from pymongo import MongoClient
 from datetime import datetime
 import sys
+import os # Novo: Para manipulação de arquivos e diretórios
 
 # --- CONFIGURAÇÕES DO MONGODB ---
-# Ajuste as credenciais e nomes de coleções conforme a necessidade
 MONGO_URI = "mongodb+srv://guilherme_db_user:T8fkkkVcT7K7YMv@cluster0.otygn9m.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 NOME_BANCO = "AIHO" 
 NOME_COLECAO = "achados_oportunisticos_aorta"
 
+# --- CONFIGURAÇÃO DE PASTA ---
+# *** AJUSTE ESTE CAMINHO PARA A PASTA CORRETA DOS SEUS ARQUIVOS TXT ***
+# Mude as barras invertidas para barras normais
+PASTA_DE_LAUDOS = "C:/Users/zecro/OneDrive/Desktop/laudos_medicos_robustos"
 # --- TERMOS DE EXCLUSÃO (Filtro de Foco Primário) ---
 EXAMES_FOCO_AORTA = [
     "angiotomografia da aorta", 
@@ -20,30 +24,22 @@ EXAMES_FOCO_AORTA = [
     "dissecção de aorta"
 ]
 
-# --- FUNÇÕES AUXILIARES ---
-
+# --- FUNÇÕES AUXILIARES (Sem Alterações) ---
 def normalizar(texto):
-    """
-    Converte o texto para minúsculas e remove acentos para facilitar a busca.
-    """
+    """Converte o texto para minúsculas e remove acentos."""
     texto = texto.lower()
     texto = ''.join(c for c in unicodedata.normalize('NFD', texto)
                     if unicodedata.category(c) != 'Mn')
     return texto
 
 def limpar_string_foco(texto):
-    """
-    Normaliza a string e remove espaços e pontuações para tornar a comparação robusta.
-    """
+    """Normaliza a string e remove espaços e pontuações."""
     texto = normalizar(texto)
-    # Remove todos os caracteres não-alfanuméricos e espaços (torna 'angio-tc' em 'angiotc')
     texto = re.sub(r'[\s\W_]+', '', texto) 
     return texto
 
 def verificar_foco_principal(texto):
-    """
-    Verifica se o laudo parece ser focado diretamente na aorta e retorna True se deve ser excluído.
-    """
+    """Verifica se o laudo parece ser focado diretamente na aorta."""
     cabecalho_limpo = limpar_string_foco(texto[:300])
     
     for termo_exclusao in EXAMES_FOCO_AORTA:
@@ -86,7 +82,7 @@ dicionario_aorta = {
     ]
 }
 
-# GRUPOS DE PATOLOGIA PARA CONSISÃO
+# GRUPOS DE PATOLOGIA PARA CONSISÃO (Sem Alterações)
 PATOLOGIAS_FRACAS_ATEROSCLEROSE = [
     "placa", "ateromatose", "deposito calcico", "ateroma", "esclerose", 
     "irregularidade parietal", "espessamento parietal", 
@@ -98,6 +94,10 @@ PATOLOGIAS_FRACAS_DILATACAO = ["ectasia", "dilatacao", "expansao", "fusiforme", 
 
 
 def filtrar_laudo_detalhado_conciso(texto):
+    """
+    Função principal que busca e agrupa achados positivos no texto.
+    (Lógica interna inalterada em relação à sua última versão corrigida)
+    """
     texto_norm = normalizar(texto)
     achados_detectados = []
     achados_unicos_set = set()
@@ -105,17 +105,14 @@ def filtrar_laudo_detalhado_conciso(texto):
     for estrutura in dicionario_aorta["estrutura"]:
         for patologia in dicionario_aorta["patologia"]:
             
-            # Padrão busca (Estrutura...Patologia) ou (Patologia...Estrutura)
             padrao = rf"({estrutura}.*?{patologia})|({patologia}.*?{estrutura})"
             
             for match in re.finditer(padrao, texto_norm):
                 
-                # 1. Definir a Janela de Contexto (50 caracteres antes, 50 depois)
                 start_contexto = max(0, match.start() - 50)
                 end_contexto = min(len(texto_norm), match.end() + 50)
                 contexto_match = texto_norm[start_contexto: end_contexto]
                 
-                # 2. Lógica de Agrupamento: Define a Patologia Agrupada (Concisa)
                 patologia_agrupada = patologia
                 
                 encontrou_termo_aterosclerose = any(
@@ -135,7 +132,6 @@ def filtrar_laudo_detalhado_conciso(texto):
                 
                 if achado_tuple not in achados_unicos_set:
                     
-                    # 3. Busca por detalhes no contexto
                     detalhes_encontrados = [det for det in dicionario_aorta["detalhe"] if det in contexto_match]
                     
                     achados_detectados.append({
@@ -147,11 +143,9 @@ def filtrar_laudo_detalhado_conciso(texto):
 
     return achados_detectados
 
-# --- FUNÇÃO DE SALVAMENTO NO MONGODB ---
+# --- FUNÇÃO DE SALVAMENTO NO MONGODB (Inalterada) ---
 def salvar_no_mongodb(laudo_id: str, nome_arquivo_origem: str, texto_laudo_bruto: str, achados_filtrados: list):
-    """
-    Conecta ao MongoDB e insere um documento contendo os achados estruturados.
-    """
+    """Conecta ao MongoDB e insere um documento contendo os achados estruturados."""
     status_ao = bool(achados_filtrados)
 
     documento = {
@@ -171,56 +165,76 @@ def salvar_no_mongodb(laudo_id: str, nome_arquivo_origem: str, texto_laudo_bruto
         db = cliente[NOME_BANCO]
         colecao = db[NOME_COLECAO]
         
-        # Só insere se houver achados detectados
         if achados_filtrados:
             resultado = colecao.insert_one(documento)
-            print(f"\n✅ Sucesso: Documento inserido no DB '{NOME_BANCO}' / Coleção '{NOME_COLECAO}'.")
-            print(f"ID do Documento MongoDB: {resultado.inserted_id}")
+            print(f"  ✅ Sucesso: Documento inserido (ID: {laudo_id})")
         else:
-            print("\n⚠️ Inserção no MongoDB Ignorada: Nenhum Achado Oportunístico detectado.")
+            print(f"  ⚠️ Ignorado: Nenhum AO detectado (ID: {laudo_id})")
 
     except Exception as e:
-        print(f"\n❌ ERRO FATAL: Falha ao conectar ou inserir no MongoDB.")
-        print(f"Detalhes do Erro: {e}")
-        sys.exit(1)
+        print(f"\n❌ ERRO FATAL ao tentar conectar ou inserir o arquivo {nome_arquivo_origem}: {e}")
+        # Não usamos sys.exit(1) aqui para não parar o processamento do lote inteiro
+        # mas você pode querer logar esse erro separadamente.
         
     finally:
         if cliente:
             cliente.close()
 
+# --- NOVO FLUXO DE PROCESSAMENTO EM LOTE ---
+
+def processar_pasta_laudos(caminho_pasta):
+    """
+    Itera sobre todos os arquivos TXT em uma pasta, processa cada laudo 
+    e envia os resultados para o MongoDB.
+    """
+    if not os.path.isdir(caminho_pasta):
+        print(f"\n❌ ERRO: O caminho '{caminho_pasta}' não é uma pasta válida ou não existe.")
+        return
+
+    arquivos = [f for f in os.listdir(caminho_pasta) if f.endswith('.txt')]
+    
+    if not arquivos:
+        print(f"\n⚠️ Aviso: Nenhuma arquivo .txt encontrado na pasta: '{caminho_pasta}'")
+        return
+
+    print(f"\n--- Iniciando Processamento de {len(arquivos)} Laudo(s) ---")
+    
+    for nome_arquivo in arquivos:
+        caminho_completo = os.path.join(caminho_pasta, nome_arquivo)
+        laudo_id = nome_arquivo.replace('.txt', '') # Usa o nome do arquivo como ID
+
+        print(f"\n[Processando] -> {nome_arquivo}")
+
+        try:
+            with open(caminho_completo, 'r', encoding='utf-8') as f:
+                texto_laudo_bruto = f.read()
+            
+            # 1. Filtro de Foco Primário
+            if verificar_foco_principal(texto_laudo_bruto):
+                print("  ❌ Laudo Ignorado: Foco primário na Aorta.")
+                continue
+
+            # 2. Filtragem de Achados Oportunísticos
+            resultado_filtrado = filtrar_laudo_detalhado_conciso(texto_laudo_bruto)
+
+            # 3. Envio para o MongoDB
+            salvar_no_mongodb(
+                laudo_id=laudo_id,
+                nome_arquivo_origem=nome_arquivo,
+                texto_laudo_bruto=texto_laudo_bruto,
+                achados_filtrados=resultado_filtrado
+            )
+            
+        except FileNotFoundError:
+            print(f"  ❌ ERRO: Arquivo não encontrado: {caminho_completo}")
+        except Exception as e:
+            print(f"  ❌ ERRO INESPERADO ao ler ou processar o arquivo {nome_arquivo}: {e}")
+
+    print("\n--- Processamento de Lote Concluído ---")
+
 
 # --- FLUXO PRINCIPAL DE EXECUÇÃO ---
 
 if __name__ == "__main__":
-    
-    # Exemplo de Laudo (Angio-TC de Aorta Abdominal)
-    ID_LAUDO_TESTE = "LAUDO_04_BOTAO_FIX"
-    TEXTO_LAUDO_BRUTO = """
-        TC Abdome. Paciente de 59 anos. Achados: Diverticulite aguda. Aorta abdominal sem alterações.
-    """
-    
-    print(f"Iniciando a verificação do laudo: {ID_LAUDO_TESTE}")
-    
-    # 1. PASSO DE EXCLUSÃO DE FOCO PRIMÁRIO (Mantido para segurança)
-    if verificar_foco_principal(TEXTO_LAUDO_BRUTO):
-        print("❌ LAUDO IGNORADO: O foco principal é a AORTA (Angio-TC). Não é Achado Oportunístico.")
-    else:
-        # Se passar no filtro, prossegue com a filtragem
-        resultado_filtrado = filtrar_laudo_detalhado_conciso(TEXTO_LAUDO_BRUTO)
-
-        print("\n--- Resultados Finais (Conciso e Agrupado) ---")
-        if resultado_filtrado:
-            for achado in resultado_filtrado:
-                print(f"- Estrutura: {achado['estrutura']}, Patologia: {achado['patologia']}, Detalhe: {achado['detalhe']}")
-        else:
-            print("Nenhum achado relevante de aorta detectado no texto.")
-
-        # 3. Enviar para o MongoDB
-        print("\n--- Iniciando a Integração com MongoDB ---")
-        
-        salvar_no_mongodb(
-            laudo_id=ID_LAUDO_TESTE,
-            nome_arquivo_origem="TEXTO_EMBUTIDO",
-            texto_laudo_bruto=TEXTO_LAUDO_BRUTO,
-            achados_filtrados=resultado_filtrado
-        )
+    # Executa a função de processamento em lote usando o caminho definido acima
+    processar_pasta_laudos(PASTA_DE_LAUDOS)
